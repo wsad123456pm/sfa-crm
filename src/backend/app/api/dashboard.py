@@ -1,5 +1,7 @@
 """Dashboard API — aggregate stats for overview page."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, func, select
 
@@ -13,7 +15,7 @@ from app.services.permission_service import get_visible_user_ids
 router = APIRouter()
 
 
-def _lead_count(session: Session, visible_ids: list[str] | None, **filters) -> int:
+def _lead_count(session: Session, visible_ids: Optional[list[str]], **filters) -> int:
     stmt = select(func.count(Lead.id))
     if visible_ids is not None:
         stmt = stmt.where(Lead.owner_id.in_(visible_ids))  # type: ignore

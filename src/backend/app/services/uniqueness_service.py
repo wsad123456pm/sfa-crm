@@ -1,6 +1,7 @@
 """Lead uniqueness detection: exact match on unified_code + fuzzy match on company name."""
 
 import re
+from typing import Optional
 
 from rapidfuzz import fuzz
 from sqlmodel import Session, select
@@ -24,7 +25,7 @@ def strip_legal_suffix(name: str) -> str:
 def check_uniqueness(
     session: Session,
     company_name: str,
-    unified_code: str | None,
+    unified_code: Optional[str],
     threshold: int = 85,
 ) -> dict:
     """Check for duplicate leads.

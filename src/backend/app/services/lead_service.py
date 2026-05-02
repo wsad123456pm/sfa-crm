@@ -1,6 +1,7 @@
 """Lead business logic — Ontology Actions."""
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from sqlmodel import Session, select
 
@@ -81,7 +82,7 @@ def assign_lead(
     assignee_id: str,
     *,
     private_pool_limit: int = 100,
-    ip: str | None = None,
+    ip: Optional[str] = None,
 ) -> Lead:
     """Assign a lead to a sales person."""
     lead = session.get(Lead, lead_id)
@@ -121,7 +122,7 @@ def claim_lead(
     lead_id: str,
     *,
     private_pool_limit: int = 100,
-    ip: str | None = None,
+    ip: Optional[str] = None,
 ) -> Lead:
     """Claim a lead from the public pool."""
     lead = session.get(Lead, lead_id)
@@ -160,7 +161,7 @@ def release_lead(
     actor_id: str,
     lead_id: str,
     *,
-    ip: str | None = None,
+    ip: Optional[str] = None,
 ) -> Lead:
     """Release a lead back to the public pool."""
     lead = session.get(Lead, lead_id)
@@ -187,7 +188,7 @@ def mark_lead_lost(
     actor_id: str,
     lead_id: str,
     *,
-    ip: str | None = None,
+    ip: Optional[str] = None,
 ) -> Lead:
     """Mark a lead as lost."""
     lead = session.get(Lead, lead_id)
@@ -214,7 +215,7 @@ def convert_lead(
     actor_id: str,
     lead_id: str,
     *,
-    ip: str | None = None,
+    ip: Optional[str] = None,
 ):
     """Convert a lead to a customer. Returns (lead, customer)."""
     from app.models.customer import Customer
@@ -262,15 +263,15 @@ def convert_lead(
 def log_followup(
     session: Session,
     actor_id: str,
-    lead_id: str | None = None,
-    customer_id: str | None = None,
+    lead_id: Optional[str] = None,
+    customer_id: Optional[str] = None,
     *,
-    contact_id: str | None = None,
+    contact_id: Optional[str] = None,
     followup_type: str,
     content: str,
     followed_at: str,
     source: str = "manual",
-    ip: str | None = None,
+    ip: Optional[str] = None,
 ):
     """Log a followup and update last_followup_at."""
     from app.models.followup import FollowUp

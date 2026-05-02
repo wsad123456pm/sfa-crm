@@ -1,5 +1,7 @@
 """Webhook endpoints for external system callbacks."""
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -16,7 +18,7 @@ class OrderPaymentEvent(BaseModel):
     event: str
     order_type: str
     company_name: str
-    unified_code: str | None = None
+    unified_code: Optional[str] = None
     amount: float
     paid_at: str
 

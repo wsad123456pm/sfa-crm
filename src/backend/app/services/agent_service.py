@@ -1,6 +1,7 @@
 """Agent service — LLM orchestration and tool dispatch."""
 
 import json
+from typing import Optional
 from urllib.parse import quote
 
 import httpx
@@ -9,7 +10,7 @@ from sqlmodel import Session, select
 from app.models.llm_config import ConversationMessage, LLMConfig, Skill
 
 
-def get_active_llm_config(session: Session) -> LLMConfig | None:
+def get_active_llm_config(session: Session) -> Optional[LLMConfig]:
     return session.exec(
         select(LLMConfig).where(LLMConfig.is_active == True)  # noqa: E712
     ).first()

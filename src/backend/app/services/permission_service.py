@@ -2,6 +2,7 @@
 
 import json
 from collections import defaultdict
+from typing import Optional
 
 from sqlmodel import Session, select
 
@@ -9,10 +10,10 @@ from app.models.auth import UserDataScope
 from app.models.org import OrgNode, User
 
 
-def _build_children_map(session: Session) -> dict[str | None, list[str]]:
+def _build_children_map(session: Session) -> dict[Optional[str], list[str]]:
     """Load all OrgNodes and build {parent_id: [child_ids]} map."""
     nodes = session.exec(select(OrgNode)).all()
-    children: dict[str | None, list[str]] = defaultdict(list)
+    children: dict[Optional[str], list[str]] = defaultdict(list)
     for node in nodes:
         children[node.parent_id].append(node.id)
     return children
@@ -30,7 +31,7 @@ def get_subtree_node_ids(session: Session, node_id: str) -> list[str]:
     return result
 
 
-def get_visible_user_ids(session: Session, current_user: User) -> list[str] | None:
+def get_visible_user_ids(session: Session, current_user: User) -> Optional[list[str]]:
     """Return list of user IDs visible to current_user based on DataScope.
     Returns None if scope is 'all' (no filtering needed)."""
     scope_record = session.exec(

@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -13,7 +14,7 @@ JWT_EXPIRE_HOURS = 24
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def create_access_token(user_id: str, login: str, roles: list[str]) -> str:
+def create_access_token(user_id: str, login: str, roles: list) -> str:
     expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRE_HOURS)
     payload = {
         "sub": user_id,
@@ -24,7 +25,7 @@ def create_access_token(user_id: str, login: str, roles: list[str]) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def verify_token(token: str) -> dict | None:
+def verify_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         return payload
