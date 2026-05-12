@@ -86,6 +86,18 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "get_lead_meddicc",
+        "mode": "read",
+        "description": "读指定线索已持久化的 MEDDICC 仪表盘评估（score + 7 维度状态 + 每维度证据条目）。回答 MEDDICC / 销售进展 / 评分类问题时必须用这个工具，**不要**自己根据跟进记录现推 —— 仪表盘是后端 LLM 已经抽过的权威结果，自己重推会跟仪表盘对不上。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "lead_id": {"type": "string", "description": "线索ID"},
+            },
+            "required": ["lead_id"],
+        },
+    },
+    {
         "name": "list_customers",
         "mode": "read",
         "description": "查看客户列表",
@@ -177,6 +189,36 @@ TOOL_DEFINITIONS = [
             },
             "required": ["lead_id"],
         },
+    },
+    # ── spec 004：经理视角团队级 4 个新 tool ──
+    {
+        "name": "scan_team_warnings",
+        "mode": "read",
+        "description": "扫描当前 user 数据范围内（DataScope）所有 active lead，返回触发了 warning 的 lead 列表 + 每条命中的 warning code 列表。回答\"团队哪几单存在风险\"\"我有哪些 lead 出问题\"等问题时调用。",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "team_meddicc_summary",
+        "mode": "read",
+        "description": "返回团队 MEDDICC 概览：avg score / 7 维亮灯密度 / Top 3 + Bottom 3 sales。回答\"团队 MEDDICC 完成度\"\"团队整体销售健康度\"类问题。",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "top_attention_deals",
+        "mode": "read",
+        "description": "返回当前最值得关注的 N 条 lead（按 warning 数 + score 反向 + amount 加权排序）。回答\"今天我该重点看哪几单\"\"哪些 lead 最危险\"等问题。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "返回多少条，默认 5"},
+            },
+        },
+    },
+    {
+        "name": "forecast_category_distribution",
+        "mode": "read",
+        "description": "返回 6 个 forecast bucket 各自的 lead 数 + warnings 数 + 总金额。回答\"团队 pipeline 分布情况\"\"必赢有几单\"等问题。注意：默认仅播报 count + warnings_count，金额仅在用户明确问时才说。",
+        "parameters": {"type": "object", "properties": {}},
     },
 ]
 
@@ -286,6 +328,53 @@ def execute_tool(
                 ],
             }
 
+        elif tool_name == "get_lead_meddicc":
+            # 读已持久化的仪表盘数据（lead_meddicc_evidence 表 + lead.meddicc_score）
+            from app.models.lead_meddicc_evidence import LeadMeddiccEvidence, DIMENSIONS
+            lead = session.get(Lead, args["lead_id"])
+            if not lead:
+                return {"success": False, "message": "线索不存在"}
+            evidences = session.exec(
+                select(LeadMeddiccEvidence).where(LeadMeddiccEvidence.lead_id == lead.id)
+            ).all()
+            DIM_LABELS = {
+                "metrics": "M Metrics（量化指标）",
+                "economic_buyer": "E Economic Buyer（经济决策人）",
+                "decision_criteria": "D Decision Criteria（决策标准）",
+                "decision_process": "D Decision Process（决策流程）",
+                "pain": "I Identify Pain（痛点识别）",
+                "champion": "C Champion（内部支持者）",
+                "competition": "C Competition（竞争态势）",
+            }
+            by_dim: dict = {dim: [] for dim in DIMENSIONS}
+            for ev in evidences:
+                by_dim[ev.dimension].append({
+                    "evidence_text": ev.evidence_text,
+                    "confidence": round(ev.confidence, 2) if ev.confidence else None,
+                    "source_type": ev.source_type,
+                })
+            dimensions_view = []
+            for dim in DIMENSIONS:
+                items = by_dim[dim]
+                dimensions_view.append({
+                    "dimension": dim,
+                    "label": DIM_LABELS[dim],
+                    "is_lit": len(items) > 0,
+                    "evidence_count": len(items),
+                    "evidences": items,
+                })
+            return {
+                "success": True,
+                "lead_id": lead.id,
+                "company_name": lead.company_name,
+                "score": lead.meddicc_score,
+                "completion": f"{lead.meddicc_completion or 0}/7",
+                "last_analyzed_at": lead.meddicc_last_analyzed_at,
+                "dimensions": dimensions_view,
+                "detail_url": f"/leads/{lead.id}",
+                "_hint": "回答时请直接引用上面 dimensions 里每个维度的 is_lit / evidence_count / evidences。不要自己根据跟进记录现推 MEDDICC，否则会跟仪表盘对不上。如果 last_analyzed_at 较旧，可建议用户去详情页点重新分析。",
+            }
+
         elif tool_name == "list_customers":
             stmt = select(Customer)
             if current_user:
@@ -377,6 +466,44 @@ def execute_tool(
                 "label": f"标记流失{': ' + name if name else ''}",
                 "url": f"/leads/{lead_id}#actions",
             }
+
+        # ── spec 004 团队级 chat tool ──────────────────────────────────────
+        elif tool_name == "scan_team_warnings":
+            from app.services import manager_pipeline_service as mps
+            if current_user is None:
+                return {"success": False, "message": "未登录"}
+            result = mps.scan_team_warnings(current_user, session)
+            result["success"] = True
+            result["pipeline_url"] = "/manager-pipeline"
+            return result
+
+        elif tool_name == "team_meddicc_summary":
+            from app.services import manager_pipeline_service as mps
+            if current_user is None:
+                return {"success": False, "message": "未登录"}
+            result = mps.team_meddicc_summary(current_user, session)
+            result["success"] = True
+            result["pipeline_url"] = "/manager-pipeline"
+            return result
+
+        elif tool_name == "top_attention_deals":
+            from app.services import manager_pipeline_service as mps
+            if current_user is None:
+                return {"success": False, "message": "未登录"}
+            limit = int(args.get("limit") or 5)
+            result = mps.top_attention_deals(current_user, session, limit=limit)
+            result["success"] = True
+            result["pipeline_url"] = "/manager-pipeline"
+            return result
+
+        elif tool_name == "forecast_category_distribution":
+            from app.services import manager_pipeline_service as mps
+            if current_user is None:
+                return {"success": False, "message": "未登录"}
+            result = mps.forecast_category_distribution(current_user, session)
+            result["success"] = True
+            result["pipeline_url"] = "/manager-pipeline"
+            return result
 
         else:
             return {"success": False, "message": f"Unknown tool: {tool_name}"}

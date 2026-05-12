@@ -37,10 +37,16 @@ Windows 用户双击 `start.bat`，等待两个终端窗口启动完成后访问
 首次使用需配置 LLM：
 1. 用 `admin` 登录
 2. 进入「Admin → LLM 配置」
-3. 填入 API Key（支持 DeepSeek、Anthropic 等 OpenAI 兼容 Provider）
+3. 填入 API Key（支持 DeepSeek、Anthropic 等 OpenAI 兼容 Provider；推荐 DeepSeek-chat，国内可达且响应快）
 4. 点击保存并激活
 
-配置完成后，任意用户登录都可以使用右下角的 AI 助手。演示案例见 [`src/demo/copilot-cases.md`](src/demo/copilot-cases.md)。
+配置完成后，任意用户登录都可以使用右下角的 AI 助手。
+
+**Copilot 体验要点：**
+
+- **Human-in-the-Loop 边界**：AI 只负责查询、分析、把动作翻译成「待确认表单」；写入（创建线索、录入跟进、转化客户等）一律要用户在表单里点提交才生效。AI 不会"已经创建"或"已为你完成"，它只会出 nav 按钮。
+- **流式 Markdown 渲染**：AI 回复支持标题、列表、代码块、表格、加粗等富文本，流式吐字时逐步展示，不破坏渲染。
+- **PC + Mobile 双形态**：PC 右侧 chat 侧栏（登录后默认展开）；移动端走 `/m/chat` 全屏 chat。同一套 prompt 在两端都跑得通，演示案例见 [`docs/copilot-cases.md`](docs/copilot-cases.md)。
 
 ---
 
@@ -106,6 +112,51 @@ Spec 里有业务逻辑、对象定义、行为约束。AI 基于这些生成代
 | 第七集 | Plan 阶段：技术栈选型，AI Agent 方案 | 完成 |
 | 第八集 | Spec Coding 的正确打开方式：spec-kit 定位与协作分工 | 完成 |
 | 编码阶段 | 110 个任务全部实现，14 个 Phase 完成 | 完成 |
+| spec 001 | 登录页双栏 + 移动端 + Onboarding 收口 | 完成（merged） |
+| spec 002 | 公网部署安全/治理硬化（限流 / 熔断 / prompt_guard / 半小时数据自动重置 / Fernet 加密 / 启动密钥校验 / Nginx + certbot 部署文档） | 完成（merged，tag `v-spec002`） |
+| spec 002 二轮 | Copilot 可靠性硬化：AI 写动作 HITL 边界、chat 流式 Markdown 渲染（含表格）、AI 幻觉 ID 改返 404、9 case Playwright 全量回归（PC + Mobile = 18 场景，真实 LLM） | 完成（merged） |
+| spec 003 | MEDDICC 销售视角自检：7 维证据抽取、对话录入、场景卡演示、Score 仪表盘、PC + Mobile 等价 | 完成（merged，tag `v-spec003`） |
+| spec 004 | MEDDICC 经理视角 Pipeline：Forecast 6 tab + 主表 + Warnings 7 规则 + AI 反查吹牛 + Team Rollup + 单 lead 趋势图（PC + Mobile） | 完成（merged，tag `v-spec004`） |
+| spec 004 v2 UX | 默认 Team 视图 / 移动端 forecast tabs 折行 / Warnings 弹层 Portal 化 / 移动端 BottomSheet / 金刚区 5 槽 / Lead 详情页可改 Forecast / Seed data 大扩量（54 lead / 29 评分 / 116 evidence / 116 history） | 完成 |
+| spec 005 | （计划中）AI 主动巡检 / 每日早报推送 | 待 brainstorm |
+
+---
+
+## 经理 Pipeline 演示路径（spec 004）
+
+PC：
+1. 用 `manager01` 登录 → 左侧导航点「经理 Pipeline」 → 跳转 `/manager-pipeline`
+2. **默认进 Team 视图**（团队全表：每个销售平均 Score / Warnings / 总额 / 最近活动），一眼看出谁强谁弱
+3. 点销售名字 → drill-down 跳 Deals 视图 + 自动按 owner filter
+4. Deals 视图 Forecast 6 tab（进行中 / 必赢 / 大概率 / 乐观估算 / 已赢单 / 已丢单），每 tab 显示条数 + ⚠️ Warnings 数
+5. 主表行内点 Forecast 下拉 → 改成"必赢" → AI 校验 dialog（证据不足时拦下来 + 给出建议档位）
+6. 主表点 lead name 进详情页 → 头部可直接改 Forecast / 看 MEDDICC 仪表盘 / 趋势小折线图
+
+Mobile：
+1. 用 `manager01` 登录 → 底部金刚区第 4 个 tab "🎯 Pipeline" → 跳 `/m/manager-pipeline`
+2. 默认 Team 视图卡片栈 → 点销售卡 drill-down 到 Deals
+3. Deals 视图 6 个 Forecast tabs **自动折行**铺开（不需要左右拖），卡片化 deal list
+4. 点卡片 Forecast 标签 → BottomSheet 编辑 → AI 校验全屏 dialog
+5. ⚠️ Warning 标记点击展开 BottomSheet 列出 7 类风险详情（不再被卡片宽度切）
+
+**Sales 视角（同一页面）：** 销售用 sales01 登录后也能看 Pipeline，标题变"我的 Pipeline"，Team toggle 隐藏，DataScope 自动 filter 成 owner=self。
+
+Chat（PC + Mobile 通用）：
+- "团队哪几单存在风险？" → AI 调 `scan_team_warnings`
+- "团队 MEDDICC 完成度怎么样？" → AI 调 `team_meddicc_summary`
+- "今天我该重点看哪几单？" → AI 调 `top_attention_deals`
+
+---
+
+## 公网部署
+
+跟着 [`docs/deploy.md`](docs/deploy.md) 在干净 Linux VM 上 30 分钟内可上线（含 systemd / Nginx 反向代理 / Let's Encrypt HTTPS）。spec 002 已闭环以下硬化项：
+
+- **滥用拦截**：单 (IP, user) 10 条/分 + 100 条/天 限流；全站 LLM 200 次/小时熔断；prompt-injection 黑名单软拦截 + system prompt 边界条款
+- **数据隔离**：每 30 分钟自动清业务数据保留账号配置（前端右下角实时倒计时小气泡）
+- **密钥硬化**：JWT_SECRET / LLM_KEY_FERNET_KEY / CORS_ORIGINS 启动校验，缺/默认值直接拒绝启动
+- **LLM Key 防泄漏**：DB 中 Fernet 加密；前端永远拿不到 key（Next.js Route 从 server env 读，浏览器只看流式响应）
+- **全量审计**：chat_audit 表记录每次对话的 user/IP/UA/输入长度/拦截原因/输出摘要
 
 ---
 
@@ -144,9 +195,17 @@ npm run dev                       # http://localhost:3000
 ### 运行集成测试
 
 ```bash
+# 后端 pytest 全量
 cd src/backend
-pytest tests/integration/ -v
+pytest tests/ -q
+
+# 前端 Playwright 真实回归（需后端 + frontend dev server 都在跑，且 DB 配了 active LLM Key）
+cd src/frontend
+npx playwright test pc-copilot-cases-regression --reporter=list      # PC 9 case，真实 LLM
+npx playwright test mobile-copilot-cases-regression --reporter=list  # Mobile 9 case，真实 LLM
 ```
+
+**回归约定（刚性）**：用户说"回归测试 / 全量测试"时，上面三条 **全跑过才算通过**。详见 [`CLAUDE.md`](CLAUDE.md) 的「回归测试约定」段。
 
 ---
 
@@ -156,7 +215,8 @@ pytest tests/integration/ -v
 |----|------|
 | 后端 | FastAPI + SQLModel + SQLite (WAL) |
 | 前端 | Next.js 14 App Router |
-| AI Agent | Vercel AI SDK + Anthropic API (Tool Use) |
+| AI Agent | Vercel AI SDK v6 + 多 Provider（DeepSeek / Anthropic 等，OpenAI 兼容协议） |
+| 前端 chat | 自研轻量 Markdown 渲染（无外部依赖），支持流式 + 表格 / 列表 / 代码块 |
 | 认证 | JWT (python-jose) |
 | 权限 | RBAC + DataScope (Role/Permission/UserDataScope) |
 | 调度 | APScheduler (自动释放、日报生成) |
