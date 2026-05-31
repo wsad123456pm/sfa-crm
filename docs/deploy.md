@@ -2,7 +2,7 @@
 
 **适用范围**：spec 002 公网部署安全/治理硬化之后的所有版本
 
-**目标**：把 demo 站从干净的腾讯云 Linux VM 一次性部署到 `https://sfacrm.pmyangkun.com`，30 分钟内完成上线。
+**目标**：把 demo 站从干净的腾讯云 Linux VM 一次性部署到 `https://crm.pmyangkun.com`，30 分钟内完成上线。
 
 **部署原则**：**公网永远跟 master HEAD**。每个 spec 完整 PR + merge 进 master 后立即部署最新代码，不切 tag、不留过渡版本。这样演示站永远代表项目最新形态，回滚只在线上崩溃时才用（见 §十二）。
 
@@ -11,7 +11,7 @@
 ## 一、前置条件
 
 - 一台干净的 Linux VM（推荐 Ubuntu 22.04 / Debian 12，2 vCPU / 2GB RAM 起步）
-- 公网 IP 已绑定 DNS A 记录到 `sfacrm.pmyangkun.com`
+- 公网 IP 已绑定 DNS A 记录到 `crm.pmyangkun.com`
 - ICP 备案号已通过
 - 域名根 `pmyangkun.com` 的 ICP 备案号在备案管理后台
 
@@ -56,7 +56,7 @@ chmod 600 /opt/sfa-crm/.env.production  # 仅 owner 可读
 # 编辑 .env.production 填入：
 # 1. JWT_SECRET — openssl rand -base64 48
 # 2. LLM_KEY_FERNET_KEY — python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# 3. CORS_ORIGINS=https://sfacrm.pmyangkun.com
+# 3. CORS_ORIGINS=https://crm.pmyangkun.com
 # 4. ENV=production
 # 5. ANTHROPIC_API_KEY / OPENAI_API_KEY / DEEPSEEK_API_KEY / MINIMAX_API_KEY
 #    （至少配 admin UI 选定的当前 active provider 对应那一项；spec 002 T036 起这是
@@ -112,8 +112,13 @@ cd /opt/sfa-crm/src/frontend
 npm install
 
 # 配置前端 backend URL
+# ⚠️ 重要：NEXT_PUBLIC_* 前缀的环境变量会被打包进客户端 JS bundle，
+# 浏览器执行时直接读取。绝不能写 127.0.0.1 / localhost —— 浏览器会
+# 解析为"用户自己电脑"的 localhost（而不是服务器），导致登录后所有
+# fetch 报 "Failed to fetch"。必须用浏览器能访问到的公网 URL（即本
+# 服务部署的对外 HTTPS 域名）。同源 fetch 还能避开 CORS。
 cat > .env.production.local <<EOF
-NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_BACKEND_URL=https://crm.pmyangkun.com
 EOF
 
 # 构建生产版本
@@ -188,7 +193,7 @@ sudo systemctl start sfa-crm-frontend
 sudo tee /etc/nginx/sites-available/sfacrm > /dev/null <<'EOF'
 server {
     listen 80;
-    server_name sfacrm.pmyangkun.com;
+    server_name crm.pmyangkun.com;
 
     # ACME challenge for certbot
     location /.well-known/acme-challenge/ {
@@ -203,15 +208,20 @@ server {
 
 server {
     listen 443 ssl http2;
-    server_name sfacrm.pmyangkun.com;
+    server_name crm.pmyangkun.com;
 
     # SSL 证书路径（certbot 会自动写）
-    ssl_certificate /etc/letsencrypt/live/sfacrm.pmyangkun.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/sfacrm.pmyangkun.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/crm.pmyangkun.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/crm.pmyangkun.com/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
-    # 后端 API
-    location /api/ {
+    # 后端 API（注意：是 /api/v1/ 而不是 /api/）
+    # 关键陷阱：Next.js 前端在 /api/chat 也有 Route Handler（LLM 流式 chat 入口）。
+    # 如果这里写 location /api/ 一刀切给 backend，会让 /api/chat 错误地落到
+    # backend（不存在该路由）返回 404，导致 AI Copilot "请求失败"。
+    # 后端所有真实路由都在 /api/v1/ 下（auth/leads/agent 等），所以这里必须
+    # 精确匹配 /api/v1/，剩下含 /api/chat 的请求统一交给前端 Next.js。
+    location /api/v1/ {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -224,19 +234,35 @@ server {
         proxy_read_timeout 300s;
     }
 
-    # 前端 Next.js（页面 + RSC）
+    # AI Copilot 流式 chat（Next.js Route Handler at /api/chat）—— 独立 location 块
+    # 必须显式关 buffering + cache + chunked encoding，否则浏览器看不到打字机效果，
+    # LLM 响应会被 nginx 攒在缓冲区里一次性吐给前端（2026-05-19 实测踩过这个坑：
+    # 把 streaming 设置只塞在根 location 太粗，且部署脚本容易把它误删；独立块更醒目）
+    location /api/chat {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_set_header Connection '';
+        chunked_transfer_encoding off;
+        proxy_read_timeout 300s;
+    }
+
+    # 前端 Next.js 其余路径（页面 + RSC + 静态资源）
     location / {
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-
-        # Next.js HMR / 流式响应
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_buffering off;
+        # 注意：这里不再关 buffering——streaming 由独立的 /api/chat 块负责
     }
 }
 EOF
@@ -250,7 +276,7 @@ sudo systemctl reload nginx
 ## 八、HTTPS 证书
 
 ```bash
-sudo certbot --nginx -d sfacrm.pmyangkun.com --non-interactive --agree-tos -m your-email@example.com
+sudo certbot --nginx -d crm.pmyangkun.com --non-interactive --agree-tos -m your-email@example.com
 
 # certbot 会自动改 nginx 配置 + 申请证书 + 配置自动续期 timer
 sudo systemctl status certbot.timer  # 应是 active
@@ -263,9 +289,9 @@ sudo systemctl status certbot.timer  # 应是 active
 curl -i http://127.0.0.1:8000/
 
 # 2. HTTPS 访问首页
-curl -I https://sfacrm.pmyangkun.com/
+curl -I https://crm.pmyangkun.com/
 
-# 3. 浏览器访问 https://sfacrm.pmyangkun.com，登录 sales01 / 12345
+# 3. 浏览器访问 https://crm.pmyangkun.com，登录 sales01 / 12345
 
 # 4. 跑 8 个 demo case（详见 docs/copilot-cases.md），每个 3-5 轮对话不被 429/503
 

@@ -124,9 +124,33 @@ spec-kit 产物：`specs/002-public-deploy-hardening/`（spec.md / plan.md / res
 - ✅ spec 003（MEDDICC 销售视角）已 merge，tag `v-spec003` → `cd8133c`
 - ✅ spec 004（MEDDICC 经理视角 Pipeline）已 merge，tag `v-spec004` → `8271812`，PR #5
 - ✅ spec 004 v2 UX 微调（2026-05-07 当晚 + 当夜两轮）：默认 Team 视图 / 移动端 forecast tabs 折行 / Warnings & Forecast 弹层 Portal 化 / 移动端 BottomSheet 替代浮窗 / 金刚区 5 槽（删跟进 + Pipeline 全角色可见）/ Lead 详情页头部加 Forecast 编辑 + 金额 + 关单 / Seed 大扩量（54 lead / 29 评分 / 116 evidence / 116 history snapshot）/ demo_reset_service 补 LeadMeddiccHistory 漏删
-- **测试态势（2026-05-07 终态）：** Backend 159 pytest / PC Playwright 38 / Mobile Playwright 33 / 0 fail
+- ✅ **2026-05-17 首次公网正式上线 https://crm.pmyangkun.com**（5 commit 全 push 到 master + 部署到生产）：
+  - `ee54479` 域名 sfacrm → crm + 登录页 ICP footer
+  - `431269c` nginx 反代要按 /api/v1/ 精确匹配（原 /api/ 一刀切会吞 /api/chat Next.js Route Handler 导致 AI Copilot 失败）
+  - `a788e4f` 嵌入百度统计（共享主站 site ID 961b93...）
+  - `7c4eac6` 修 ResetCountdownBadge 老 bug：localStorage key 写错 'token' → 'access_token' + 加 PC smoke 回归
+  - `fe467fb` 移动端去浮动 badge，挪到 /m/me 内嵌 ResetCountdownCard（抽 useResetCountdown hook 复用）+ 加 mobile smoke 回归
+  - 部署：本地 git archive + scp + 服务器 mv 旧目录保留 secrets + .venv/node_modules 复用 + npm build + systemctl restart frontend，详细流程见 `~/Doc.Work/Programming/claudecode/memory/feedback_deploy_vocab.md`（增量部署 7 步）
+- ✅ **2026-05-19 VM 重装 + 完整重新部署 + 安全加固**（前次 VM 疑似被攻破，从控制台重置后从零部署 + 一次性补齐所有防线）：
+  - 触发：用户报"虚拟机好像中了木马了"→ 控制台重置 VM；事后回看真正入口大概率是**前次部署用 root + 密码登录**这条老路，不是 SSH 端口或别的
+  - SSH 加固：腾讯云控制台绑定密钥对 + 下载私钥 `C:\Users\YK\.ssh\kunclawmachine.pem` + Windows 本地 icacls 锁权限 + 本地 `~/.ssh/config` 配 alias `ssh crm` + sshd `PasswordAuthentication=no` + `PermitRootLogin no`（drop-in `/etc/ssh/sshd_config.d/99-disable-password.conf`）
+  - 服务器接入：用户改为 `ubuntu`（不再是 root）+ sudo 免密拿 root（腾讯云 Ubuntu 镜像标准）
+  - 运行时：Ubuntu 24.04 / Node 22.22（Astro 6.2.1 要 ≥22.12，Next.js 14 同时兼容 Node 22）/ Python 3.12 / nginx 1.24 / certbot 2.9
+  - 全部 secrets 重生：JWT_SECRET + LLM_KEY_FERNET_KEY + WEBHOOK_SECRET 自动随机；DeepSeek key 用户手动 rotate（前一把已泄露 chat 历史 → revoke + 新生）
+  - 公网两站全活：https://crm.pmyangkun.com / https://www.pmyangkun.com 各自 Let's Encrypt 证书
+  - 应用层加固：**admin 默认密码 admin/12345 已改**（用户自行设强密码）；改密码工具脚本流程 = `/opt/sfa-crm/src/backend/.venv/bin/python /tmp/changepw.py`，脚本内用 `getpass` + passlib bcrypt 直接 UPDATE `user` 表，密码不入 history、不在 process list 暴露
+  - 系统层加固：**fail2ban**（sshd jail，5 次失败/10 分钟 → 封 1 小时）+ **UFW**（默认 deny incoming，明确放 22/80/443）+ **腾讯云安全组**（外层 ACL，与 UFW 双层）
+  - 部署期间踩 4 个坑（已记录到 [[feedback_deploy_vocab]]）：腾讯云"SSH 微信二次验证"会拦自动化 ssh → 控制台关掉；Astro 要 Node 22 而非 20；腾讯云云镜扫 sk-ant-/sk- 占位符 → 解 tar 后立刻删 `.env.production.example`；PowerShell→ssh stdin 用 `cmd /c "type file | ssh ..."`（PowerShell 不支持 `<`）+ 用 `[System.IO.File]::WriteAllText(..., UTF8Encoding($false))` 避免 BOM 报错
+  - **SSH 端口换高位**这件事评估为低 ROI 没做：密钥+fail2ban 已经把暴力破解面封死，换端口只是减少日志噪声不真提高安全性。要做需先在腾讯云安全组放新端口避免锁死
+  - **当晚补丁：chat 流式响应回归**——部署写 nginx 时漏抄根 `location /` 的 `proxy_buffering off`，导致 AI 回复一次性蹦出（无打字机效果）。修法：抽独立 `location /api/chat` 块（buffering off + cache off + chunked_transfer_encoding off），根 location 保持默认 buffer。`docs/deploy.md` 的 nginx 模板同步升级到三 location 块（/api/v1 + /api/chat + /）
+- ✅ **2026-05-21 按用户限流回归（commit 3e614eb）**：演示时用户报"一聊就显示请求过多 + 重启 VM 才恢复"+"切回页签卡 2-3 秒"。根因：spec 002 限流 key 是 `{ip}:{user_id}`，但 (a) Next.js Route Handler /api/chat 走外网回来让 backend 看所有用户 IP = 服务器自己出口 IP，(b) backend 没 trust X-Forwarded-For —— 双重叠加 → 所有用户合并到同一 IP 桶。修法三处协同：(1) `backend/main.py` 加 starlette ProxyHeadersMiddleware 只 trust 127.0.0.1；(2) systemd ExecStart 加 `--forwarded-allow-ips=127.0.0.1` 双保险；(3) frontend Route Handler 引入 server-only env `BACKEND_URL_INTERNAL=http://127.0.0.1:8000`（NEXT_PUBLIC_BACKEND_URL 留给浏览器 client-side fetch），并从 req header 取真实 IP 透传到 backend 的 `X-Forwarded-For`/`X-Real-IP`。验证：curl 模拟三个不同 XFF → backend 日志看到三个不同 client IP（不再是 101.34.78.180 一刀切）+ 浏览器实测两 user 并发不互相打架
+- **测试态势（2026-05-17 终态）：** Backend 159 pytest / PC Playwright 39（spec 003-004 38 + reset-countdown-badge-smoke 1） / Mobile Playwright 34（spec 003-004 33 + reset-countdown-card-smoke 1）/ 0 fail
 - LLM API Key：`src/backend/.env`（dev）/ DB Fernet 密文（生产，spec 002）
 - 演示案例：`docs/copilot-cases.md`（8 个独立案例）
+
+## 已知 bug / 待修 (2026-05-17)
+
+- **admin UI LLM 配置表单 API Key 字段仍强制 required**：spec 002 T036 让 chat 运行时改从 `process.env.{PROVIDER}_API_KEY` 读 key（绕开 backend），但 admin UI（`/admin/config`）的 LLM 配置表单仍要求填 API Key 才能保存。导致部署后用户体验割裂："env 已经配过了为什么 UI 还要再填一次？"。修法二选一：(1) UI 把 key 字段改 optional 加提示"留空表示使用 server env"；(2) 后端 /llm-config 接受空 key + UI 显示 env 是否已配置的指示器。下次有 spec 编排时纳入。具体踩坑场景：用户 2026-05-17 首次上线后试 chat 报"请求失败"，进 admin UI 想保存配置时被 "请输入 API Key" 阻塞
 - 一键启动：`start.bat` | 一键重置：`reset-demo.bat`
 - 公网部署：`docs/deploy.md` 一键流程（spec 002）
 - 演示账号：admin / sales01（王小明）/ sales02（李思远）/ sales03（张磊）/ manager01（陈队长），密码均为 12345
@@ -135,7 +159,7 @@ spec-kit 产物：`specs/002-public-deploy-hardening/`（spec.md / plan.md / res
 
 ## 发布 / 部署约定（2026-05-07 三修：简化为"公网永远跟最新"）
 
-**核心规则：** 公网 `sfacrm.pmyangkun.com` **永远跟 master HEAD 跑**——每个大 spec 收口（PR merge 后）立即部署最新版到公网。**不按 tag 切回旧版本演示历史。**
+**核心规则：** 公网 `crm.pmyangkun.com` **永远跟 master HEAD 跑**——每个大 spec 收口（PR merge 后）立即部署最新版到公网。**不按 tag 切回旧版本演示历史。**
 
 **为什么简化（用户 2026-05-07 三修决策）：**
 1. 切 tag 部署需要 DB schema 同步管理（每个 tag 还得带迁移脚本能 rebuild），工程量大
